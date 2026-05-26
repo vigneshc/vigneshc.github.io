@@ -123,7 +123,6 @@
       color: var(--muted); padding-top: .22rem;
       white-space: nowrap;
     }
-    .post-content {}
     .post-title {
       font-family: var(--font-serif); font-size: 1.05rem;
       color: var(--heading); font-weight: 700;
@@ -150,6 +149,11 @@
       color: var(--accent2);
       border-color: rgba(79,70,184,.3);
       background: rgba(79,70,184,.05);
+    }
+    .badge-local {
+      color: var(--accent);
+      border-color: rgba(13,124,89,.3);
+      background: rgba(13,124,89,.06);
     }
 
     @media (max-width: 540px) {
@@ -186,6 +190,20 @@
 
 <main>
   <div class="wrap">
+
+    <!-- ── 2026 ── -->
+    <div class="year-group">
+      <div class="year-label">2026</div>
+      <div class="post-list">
+        <a class="post-row" href="/blog/iceberg-deletion/">
+          <span class="post-date">May 2026</span>
+          <div class="post-content">
+            <div class="post-title">Iceberg Deletes — Equality Deletes and V3 Deletion Vectors</div>
+            <div class="post-intro">A short walkthrough of Apache Iceberg delete semantics with examples from manifests and Puffin-based deletion vectors.</div>
+          </div>
+        </a>
+      </div>
+    </div>
 
     <!-- ── 2025 ── -->
     <div class="year-group">

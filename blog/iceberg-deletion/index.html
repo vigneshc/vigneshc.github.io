@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Iceberg Deletes — Equality Deletes and V3 Deletion Vectors</title>
+  <meta name="description" content="A short walkthrough of Apache Iceberg deletes: equality deletes, V3 deletion vectors, and streaming considerations." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg:      #f9f8f6;
+      --surface: #ffffff;
+      --border:  #e4e2dd;
+      --muted:   #b5b1a8;
+      --subtle:  #8a857c;
+      --body:    #4a4640;
+      --heading: #1a1714;
+      --accent:  #0d7c59;
+      --accent2: #4f46b8;
+
+      --font-serif: 'Playfair Display', Georgia, serif;
+      --font-mono:  'DM Mono', monospace;
+      --font-sans:  'DM Sans', system-ui, sans-serif;
+      --max: 820px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--body);
+      font-family: var(--font-sans);
+      font-size: clamp(15px, 1.6vw, 17px);
+      line-height: 1.75;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      border-bottom: 1px solid var(--border);
+      background: rgba(249,248,246,.92);
+      backdrop-filter: blur(14px);
+    }
+    nav .wrap {
+      display: flex; align-items: center; justify-content: space-between;
+      height: 56px;
+    }
+
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 clamp(1.2rem, 4vw, 2.5rem); }
+
+    .nav-logo {
+      font-family: var(--font-mono); font-size: .85rem;
+      color: var(--accent); letter-spacing: .04em;
+      text-decoration: none;
+    }
+    .nav-back {
+      font-family: var(--font-mono); font-size: .78rem;
+      color: var(--subtle); letter-spacing: .06em;
+      text-decoration: none; text-transform: uppercase;
+    }
+    .nav-back:hover, .nav-logo:hover { opacity: .75; }
+
+    main { padding: clamp(2.4rem, 6vw, 4rem) 0 3rem; }
+
+    .label {
+      font-family: var(--font-mono);
+      font-size: .72rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--accent);
+      margin-bottom: .8rem;
+      display: flex; align-items: center; gap: .6rem;
+    }
+    .label::before { content: ''; width: 20px; height: 1px; background: var(--accent); }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(2rem, 5vw, 3rem);
+      color: var(--heading);
+      line-height: 1.12;
+      margin-bottom: 1rem;
+    }
+
+    .lead {
+      color: var(--body);
+      margin-bottom: 1.2rem;
+    }
+
+    h2 {
+      font-family: var(--font-serif);
+      color: var(--heading);
+      font-size: clamp(1.5rem, 3.6vw, 2rem);
+      margin-top: 2.5rem;
+      margin-bottom: .9rem;
+    }
+    h3 {
+      font-family: var(--font-serif);
+      color: var(--heading);
+      font-size: 1.2rem;
+      margin-top: 1.8rem;
+      margin-bottom: .6rem;
+    }
+
+    p { margin: .8rem 0; }
+    ul, ol { margin: .7rem 0 .7rem 1.3rem; }
+    li { margin: .35rem 0; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { opacity: .78; }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: .9em;
+      background: #f4f3f0;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: .08rem .34rem;
+    }
+
+    pre {
+      margin: 1rem 0;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #f4f3f0;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      line-height: 1.6;
+    }
+    figure.code-block {
+      margin: 1rem 0;
+    }
+    figure.code-block pre {
+      margin: .35rem 0 0;
+    }
+    .code-caption,
+    figure.code-block figcaption {
+      font-family: var(--font-mono);
+      font-size: .72rem;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--subtle);
+      margin-top: 1rem;
+      margin-bottom: .3rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: .92rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: .6rem .7rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      font-family: var(--font-mono);
+      font-size: .74rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--subtle);
+      background: #fbfaf8;
+    }
+
+    .small-note {
+      margin-top: .35rem;
+      color: var(--subtle);
+      font-size: .88rem;
+    }
+
+    .visual {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      margin: .9rem 0 1.2rem;
+    }
+    .visual-title {
+      font-family: var(--font-mono);
+      font-size: .72rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--subtle);
+      margin-bottom: .7rem;
+    }
+    .flow {
+      display: grid;
+      gap: .6rem;
+    }
+    .flow-step {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: .7rem .8rem;
+      background: #fcfbf9;
+      font-size: .92rem;
+    }
+    .flow-step strong {
+      font-family: var(--font-mono);
+      font-size: .74rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-right: .35rem;
+    }
+
+    .seq-visual {
+      display: grid;
+      gap: .6rem;
+    }
+    .seq-card {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fcfbf9;
+      padding: .72rem .8rem;
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      gap: .7rem;
+      align-items: center;
+    }
+    .seq-tag {
+      font-family: var(--font-mono);
+      font-size: .7rem;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      border: 1px solid rgba(79,70,184,.28);
+      background: rgba(79,70,184,.06);
+      border-radius: 3px;
+      padding: .18rem .45rem;
+      width: fit-content;
+    }
+    .seq-body {
+      font-size: .91rem;
+      color: var(--body);
+    }
+    .seq-arrow {
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      color: var(--muted);
+      margin: -.15rem 0 .05rem 88px;
+    }
+
+    .dv-map {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .7rem;
+      align-items: stretch;
+      margin-bottom: .7rem;
+    }
+    .dv-node {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fcfbf9;
+      padding: .72rem .75rem;
+    }
+    .dv-node-title {
+      font-family: var(--font-mono);
+      font-size: .68rem;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: .38rem;
+    }
+    .dv-node p {
+      margin: 0;
+      font-size: .9rem;
+      line-height: 1.55;
+    }
+    .dv-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+      font-family: var(--font-mono);
+      font-size: .74rem;
+      color: var(--subtle);
+    }
+
+    @media (max-width: 720px) {
+      .seq-card { grid-template-columns: 1fr; }
+      .seq-arrow { margin-left: 0; }
+      .dv-map { grid-template-columns: 1fr; }
+    }
+
+    footer {
+      padding: 2.2rem 0;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
+    }
+    .footer-text {
+      font-family: var(--font-mono);
+      font-size: .72rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="nav-logo" href="/">vigneshc</a>
+    <a class="nav-back" href="/blog/">← Writing</a>
+  </div>
+</nav>
+
+<main>
+  <article class="wrap">
+    <div class="label">Iceberg</div>
+    <h1>Deletes in Apache Iceberg</h1>
+    <p class="lead">Apache Iceberg has a few ways to handle deletes and updates. This short post expands on the <a href="https://datapapers.substack.com/p/exploring-table-formats-iceberg-and" target="_blank" rel="noreferrer">previous introduction</a> to the Iceberg format spec and focuses on deletes.</p>
+    <p>Here are the three ways to handle deletes:</p>
+    <ol>
+      <li><code>Copy-on-write</code> is the simplest. It creates a new file that excludes deleted data, removes the old file, and adds the new file in a manifest update.</li>
+      <li><code>Equality deletes</code> add a delete file with values of the equality-id columns. Deleted rows are filtered out on read.</li>
+      <li><code>V3 deletion vectors</code> add positions of deleted rows to a roaring bitmap file. Deleted rows are filtered out on read.
+        <ul>
+          <li>(V2 positional deletes used a different format, this post does not cover that.)</li>
+        </ul>
+      </li>
+    </ol>
+
+  <p>Through a series of examples, you'll learn how Iceberg represents deletes in metadata files.</p>
+    <p>Let's explore 2 and 3 in detail in this post.</p>
+
+    <h2>Equality Deletes</h2>
+    <p>Let's start with the following table schema:</p>
+    <figure class="code-block">
+      <figcaption class="code-caption">Table schema</figcaption>
+<pre>- id: int (required)
+- name: string (required)
+- value: double (required)
+- timestamp: timestamp (required)</pre>
+    </figure>
+
+    <p>Example table rows (4 rows, ids 1-4):</p>
+    <table>
+      <thead>
+        <tr><th>id</th><th>name</th><th>value</th><th>timestamp</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>User-1</td><td>100.0</td><td>2024-12-03 08:15:22</td></tr>
+        <tr><td>2</td><td>User-2</td><td>200.0</td><td>2024-12-07 14:32:45</td></tr>
+        <tr><td>3</td><td>User-3</td><td>300.0</td><td>2024-12-15 19:08:11</td></tr>
+        <tr><td>4</td><td>User-4</td><td>400.0</td><td>2024-12-21 23:55:30</td></tr>
+      </tbody>
+    </table>
+
+    <p>Let's delete ids 1 and 3. The manifest file after the delete has two snapshots: one that added 4 rows and one that deleted 2 rows.</p>
+    <figure class="code-block">
+      <figcaption class="code-caption">Table metadata after equality delete</figcaption>
+<pre>format-version: 2
+table-uuid: dc7237f8-f426-4907-a579-be12807dab78
+location: demo_output/iceberg/default/users_equality_delete_demo
+last-sequence-number: 2
+current-snapshot-id: 6000271643905118120
+snapshots:
+- sequence-number: 1
+    snapshot-id: 346476157697557815
+    summary:
+        operation: append
+        added-data-files: '1'
+        added-records: '4'
+- sequence-number: 2
+    snapshot-id: 6000271643905118120
+    summary:
+        operation: delete
+        added-equality-delete-files: '1'
+        added-delete-files: '1'
+        added-equality-deletes: '2'
+        total-delete-files: '1'</pre>
+    </figure>
+
+    <p>Manifest list for the delete snapshot has two manifests — previous data manifest (<code>content = 0</code>), and a new delete manifest (<code>content = 1</code>).</p>
+    <figure class="code-block">
+      <figcaption class="code-caption">Manifest list entries for delete snapshot</figcaption>
+<pre>records:
+- content: 0
+  manifest_path: demo_output/iceberg/default/users_equality_delete_demo/metadata/95018c92-07d2-4d88-b659-e2c870e6aa38-m0.avro
+    added_rows_count: 4
+- content: 1
+  manifest_path: demo_output/iceberg/default/users_equality_delete_demo/metadata/0ddb6c10-afb2-4eba-b647-6d8ab8fbadc8-m0.avro
+    added_rows_count: 2</pre>
+    </figure>
+
+    <p>Delete manifest (equality delete file entry) looks like this. A few things to note:</p>
+    <ol>
+      <li><code>equality_ids</code>: column id of columns used for deletion. It is the <code>id (== 1)</code> column in this example.</li>
+      <li><code>content = 2</code> indicates equality deletes. (This is the <code>content</code> in manifest, not manifest list.)</li>
+      <li>The <code>.parquet</code> delete file has ids 1 and 3.</li>
+    </ol>
+    <figure class="code-block">
+      <figcaption class="code-caption">Equality delete manifest entry</figcaption>
+<pre>records:
+- data_file:
+        content: 2
+        file_format: PARQUET
+        file_path: demo_output/iceberg/default/users_equality_delete_demo/data/eq-delete-db033e4b-e1ae-434d-8f4d-337ddb3667d3.parquet
+        equality_ids:
+        - 1
+        record_count: 2
+        lower_bounds:
+        - key: 1
+            value: AQAAAA==
+        upper_bounds:
+        - key: 1
+            value: AwAAAA==
+    snapshot_id: 6000271643905118120
+  status: 1</pre>
+  </figure>
+
+  <h3>Updates with equality deletes</h3>
+    <p>An UPDATE is a delete + insert. Both the equality delete file and the new data file are written at the same sequence number (<code>seq=3</code>):</p>
+
+    <table>
+      <thead>
+        <tr><th>seq</th><th>file type</th><th>content</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>data file</td><td>id=1,2,3,4</td></tr>
+        <tr><td>3</td><td>equality delete</td><td>id=1</td></tr>
+        <tr><td>3</td><td>data file</td><td>id=1, value=999</td></tr>
+      </tbody>
+    </table>
+
+    <div class="visual">
+      <div class="visual-title">Update write sequence map</div>
+      <div class="seq-visual">
+        <div class="seq-card">
+          <div class="seq-tag">seq = 1</div>
+          <div class="seq-body">Original data file contains <code>id=1,2,3,4</code>.</div>
+        </div>
+        <div class="seq-arrow">↓ update writes at seq=3</div>
+        <div class="seq-card">
+          <div class="seq-tag">seq = 3</div>
+          <div class="seq-body">Equality delete file marks <code>id=1</code>.</div>
+        </div>
+        <div class="seq-card">
+          <div class="seq-tag">seq = 3</div>
+          <div class="seq-body">New data file writes updated row <code>id=1, value=999</code>.</div>
+        </div>
+      </div>
+      <div class="flow" style="margin-top:.75rem;">
+        <div class="flow-step"><strong>Rule</strong> delete at sequence <code>S</code> suppresses rows where <code>seq_written &lt; S</code>.</div>
+        <div class="flow-step"><strong>Result</strong> old row is suppressed (<code>1 &lt; 3</code>), new row is preserved (<code>3 &lt; 3</code> is false).</div>
+      </div>
+    </div>
+
+    <h3>write.delete.mode property</h3>
+    <p><code>write.delete.mode</code> is a table property hint. It tells writers whether to:</p>
+    <ul>
+      <li><code>copy-on-write</code> (default for V1/V2): rewrite the entire data file, excluding deleted rows.</li>
+      <li><code>merge-on-read</code>: write a sidecar delete file (equality delete for V2, DV for V3), leave data file intact.</li>
+    </ul>
+    <p>Writers can override this hint on a per-operation basis. The property sets the default trade-off: fast writes (merge-on-read) vs. fast reads (copy-on-write).</p>
+
+    <h2>V3 Deletion Vector</h2>
+    <p>Positional deletes mark the set of <code>(file name, position)</code>s to be deleted. Readers skip those rows on read. Deletion vectors use a roaring bitmap to encode these positions efficiently.</p>
+    <p>Let's explore this by creating a <strong>V3</strong> table and deleting the same rows. This produces one Puffin DV file and references it in the delete manifest.</p>
+
+    <figure class="code-block">
+      <figcaption class="code-caption">Table metadata after V3 delete</figcaption>
+<pre>format-version: 3
+properties:
+    write.delete.mode: merge-on-read
+current-snapshot-id: 505169285673218063
+snapshots:
+- sequence-number: 1
+    summary:
+        operation: append
+- sequence-number: 2
+    summary:
+        operation: delete
+        added-delete-files: '1'
+        added-dvs: '1'
+        added-position-deletes: '2'</pre>
+    </figure>
+
+    <p>The following delete-manifest entry references a Puffin file and identifies the exact data file it applies to. A few fields to note:</p>
+    <ul>
+      <li><code>referenced_data_file</code>: exact data file this DV applies to.</li>
+      <li><code>content_offset: 4</code>: byte offset into the Puffin file where this DV blob starts. This exists because a single Puffin file can contain multiple deletion vectors.</li>
+      <li><code>content_size_in_bytes: 44</code>: byte length of the DV blob.</li>
+    </ul>
+    <figure class="code-block">
+      <figcaption class="code-caption">Deletion vector manifest entry (Puffin)</figcaption>
+<pre>records:
+- data_file:
+        content: 1
+        file_format: PUFFIN
+        file_path: demo_output/iceberg/default/users_v3_deletion_vector_demo/data/00001-1-89bef231-4cbd-4b07-9dea-b5596102da4c-00001.puffin
+        referenced_data_file: demo_output/iceberg/default/users_v3_deletion_vector_demo/data/seed-rows-1-4-b08d704d-aec2-414c-8b5e-d2d041784b2e.parquet
+        content_offset: 4
+        content_size_in_bytes: 44
+        record_count: 2
+    snapshot_id: 505169285673218063
+  status: 1</pre>
+  </figure>
+
+  <p>Deletion vectors are stored as <strong>Roaring Bitmaps</strong> inside <a href="https://iceberg.apache.org/puffin-spec/" target="_blank" rel="noreferrer">Puffin files</a>. Iceberg uses this format because bitmaps are compact and support fast membership checks and merges. For more detail, see this overview of <a href="https://www.bitsxpages.com/p/how-metrics-are-stored-and-queried?open=false#%C2%A7roaring-bitmaps" target="_blank" rel="noreferrer">roaring bitmaps</a>.</p>
+
+    <h3>Writing Deletion Vectors</h3>
+    <p>DVs require <strong>read-before-write</strong>. The writer must scan data files to discover row positions before building the bitmap. For <code>DELETE WHERE id &gt; 100</code>, the engine first finds matching row ordinals, then writes the DV.</p>
+
+    <p>Each worker handles a disjoint set of data files independently:</p>
+    <figure class="code-block">
+      <figcaption class="code-caption">Per-worker DV write outcomes</figcaption>
+<pre>Worker 1 → scans data_file_A → positions {0, 2} → writes dv_A.puffin
+Worker 2 → scans data_file_B → positions {5, 9} → writes dv_B.puffin
+Worker 3 → scans data_file_C → no matches   → writes nothing</pre>
+    </figure>
+
+    <p>Each worker writes a different Puffin file that includes previous deletes, if any. In this demo flow, that yields one current deletion vector per data file. A coordinator then collects produced DVs and commits them in one snapshot.</p>
+
+  <h3>Reading Deletion Vectors</h3>
+  <p>Unlike equality deletes (which use sequence numbers), deletion vectors link <strong>directly</strong> to a data file. Each manifest entry carries <code>referenced_data_file</code>, <code>content_offset</code>, and <code>content_size_in_bytes</code>, so readers can locate the exact bitmap blob without scanning unrelated files.</p>
+
+    <div class="visual">
+      <div class="visual-title">DV to data-file mapping</div>
+      <div class="dv-map">
+        <div class="dv-node">
+          <div class="dv-node-title">Manifest entry</div>
+          <p>Contains <code>referenced_data_file</code>, <code>content_offset</code>, and <code>content_size_in_bytes</code>.</p>
+        </div>
+        <div class="dv-node">
+          <div class="dv-node-title">Puffin blob</div>
+          <p>Reader seeks to byte offset and reads exactly the DV bitmap bytes.</p>
+        </div>
+        <div class="dv-node">
+          <div class="dv-node-title">Referenced data file</div>
+          <p>Rows are scanned and positions present in bitmap are skipped.</p>
+        </div>
+      </div>
+      <div class="dv-links">
+        <span>manifest → puffin (offset + length)</span>
+        <span>manifest → data file (direct reference)</span>
+        <span>bitmap positions → row skipping</span>
+      </div>
+      <div class="flow">
+        <div class="flow-step"><strong>Step 1</strong> Load manifest list and find delete manifests (<code>content=1, file_format=PUFFIN</code>).</div>
+        <div class="flow-step"><strong>Step 2</strong> Seek to <code>content_offset</code> in Puffin and read <code>content_size_in_bytes</code> bytes to decode the roaring bitmap.</div>
+        <div class="flow-step"><strong>Step 3</strong> Open <code>referenced_data_file</code>, iterate rows, and skip rows whose ordinal position is set in the bitmap.</div>
+      </div>
+    </div>
+
+    <h2>Streaming and Deletes</h2>
+    <p>Equality deletes are simpler for writers — they can mark content as deleted without knowing the row's position in a data file.</p>
+    <p>One common streaming pattern, followed by Flink is:</p>
+    <ol>
+      <li>Maintains an <code>id -&gt; (file, position)</code> map in memory for the rows it writes.</li>
+      <li>On delete, uses the position from this map to write a positional delete.</li>
+      <li>Falls back to equality delete if the mapping doesn't exist.</li>
+    </ol>
+    <p>As noted earlier, equality deletes can add reader overhead. Improving positional-delete support in streaming engines is one of the goals of the secondary indexes <a href="https://docs.google.com/document/d/1N6a2IOzC6Qsqv7NBqHKesees4N6WF49YUSIX2FrF7S0/edit?pli=1&tab=t.0" target="_blank" rel="noreferrer">proposal</a> (discussion as of May 2026).</p>
+    <p>RisingWave, a streaming database <a href="https://risingwave.com/blog/implementing-iceberg-compaction-rust/" target="_blank" rel="noreferrer">handles deletion</a> and compaction with two branches: ingestion writes continuously to an ingestion branch (likely with equality deletes), and periodic compaction coalesces delete files, consolidates data files on the main branch to improve read performance.</p>
+
+    <h2>Conclusion</h2>
+    <p>We covered deletes in Iceberg. Merge on read schemes are efficient for writers, but they shift work to readers. </p>
+    <p>If you want to inspect these flows in detail, or ask additional questions, try out <a href="https://github.com/vigneshc/TableFormatsExplorer" target="_blank" rel="noreferrer">TableFormatsExplorer</a>!</p>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="footer-text">© 2026 Vignesh Chandramohan</span>
+  </div>
+</footer>
+
+</body>
+</html>
